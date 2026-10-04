@@ -15,7 +15,11 @@ import openpyxl
 
 # ---------------------------------------------------------------- KONFIGURACJA
 # Numer albumu: najlepiej ustaw jako sekret INDEX_NUMBER w GitHub Actions.
-INDEX_NUMBER = os.environ.get("INDEX_NUMBER") or "21459"
+INDEX_NUMBER = re.sub(r"\D", "", os.environ.get("INDEX_NUMBER") or "") or "21459"
+
+# Opcjonalnie: wymus grupe (1 lub 2) zamiast szukac po numerze albumu.
+# Ustaw jako zmienna/sekret GROUP_NUMBER w GitHub Actions.
+GROUP_OVERRIDE = re.sub(r"\D", "", os.environ.get("GROUP_NUMBER") or "")
 
 OUTPUT_ICS = "plan_zajec_IOSI.ics"
 EXCEL_FILE = "pobrany_plan.xlsx"
@@ -428,11 +432,18 @@ def main():
         log("[UWAGA] Uzywam pliku Excel z repozytorium (pobrany_plan.xlsx).")
 
     wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
-    my_group = get_student_group(wb, INDEX_NUMBER)
-    if my_group:
-        log(f"[INFO] Twoja grupa: {my_group}")
+    if GROUP_OVERRIDE in ("1", "2"):
+        my_group = int(GROUP_OVERRIDE)
+        log(f"[INFO] Grupa wymuszona przez GROUP_NUMBER: {my_group}")
     else:
-        log("[UWAGA] Nie znaleziono indeksu na listach grup - dodaje zajecia WSZYSTKICH grup")
+        my_group = get_student_group(wb, INDEX_NUMBER)
+        if my_group:
+            log(f"[INFO] Numer albumu ({len(INDEX_NUMBER)} cyfr) znaleziony, grupa: {my_group}")
+        else:
+            log(f"[BLAD] Numer albumu ({len(INDEX_NUMBER)} cyfr, konczy sie na ...{INDEX_NUMBER[-2:]}) "
+                "nie wystepuje na listach grup.")
+            log("       Popraw sekret INDEX_NUMBER albo ustaw GROUP_NUMBER=1 / 2.")
+            sys.exit(1)
 
     events = build_events(EXCEL_FILE, my_group)
     log(f"[INFO] Liczba wydarzen: {len(events)}")
