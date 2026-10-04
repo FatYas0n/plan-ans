@@ -26,6 +26,7 @@ jobs:
       - name: Generuj plik ICS
         env:
           INDEX_NUMBER: ${{ secrets.INDEX_NUMBER }}
+          GROUP_NUMBER: ${{ vars.GROUP_NUMBER }}
         run: python main.py
 
       - name: Commit wynikow
