@@ -12,7 +12,7 @@ INDEX_NUMBER = "21459"
 OUTPUT_ICS = "plan_zajec_IOSI.ics"
 EXCEL_FILE = "pobrany_plan.xlsx"
 
-# Prawidłowy adres strony z planami zajęć Instytutu
+# Prawidłowy adres strony z planami zajęć
 URL_STRONY_PLANU = "https://ans-elblag.pl/iis-plany-zajec.html"
 
 # Poniedziałek pierwszego tygodnia semestru zimowego 2026/2027
@@ -26,11 +26,8 @@ def download_excel_from_ans():
         res = requests.get(URL_STRONY_PLANU, headers=headers, timeout=10)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            
-            # Szukamy linku do pliku z planem zajęć III rok INFORMATYKA IOSI
             for a in soup.find_all('a', href=True):
                 href = a['href']
-                # Dopasowanie po słowach kluczowych w linku lub tekście odnośnika
                 if ('IOSI' in href or 'ios' in href.lower() or 'IOSI' in a.get_text()) and (href.endswith('.xlsx') or href.endswith('.xls')):
                     link = href
                     if not link.startswith('http'):
@@ -126,7 +123,7 @@ def parse_schedule_directly(excel_path, my_groups):
     return events
 
 def generate_apple_valid_ics(events_list, output_path):
-    now_str = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+    now_utc = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
     
     lines = [
         "BEGIN:VCALENDAR",
@@ -140,8 +137,11 @@ def generate_apple_valid_ics(events_list, output_path):
 
     for item in events_list:
         uid = f"{uuid.uuid4()}@ans-elblag.pl"
-        dtstart = item['start'].strftime('%Y%m%dT%H%M%S')
-        dtend = item['end'].strftime('%Y%m%dT%H%M%S')
+        
+        # Konwersja czasu lokalnego (Europe/Warsaw) do czystego UTC ('...Z')
+        # Zapobiega błędom walidacji braku bloku VTIMEZONE w iOS
+        dtstart_utc = item['start'].astimezone(zoneinfo.ZoneInfo("UTC")).strftime('%Y%m%dT%H%M%SZ')
+        dtend_utc = item['end'].astimezone(zoneinfo.ZoneInfo("UTC")).strftime('%Y%m%dT%H%M%SZ')
         
         summary = item['summary'].replace('\n', ' ').replace(',', '\\,')
         location = item['location'].replace('\n', ' ').replace(',', '\\,')
@@ -150,9 +150,9 @@ def generate_apple_valid_ics(events_list, output_path):
         lines.extend([
             "BEGIN:VEVENT",
             f"UID:{uid}",
-            f"DTSTAMP:{now_str}",
-            f"DTSTART;TZID=Europe/Warsaw:{dtstart}",
-            f"DTEND;TZID=Europe/Warsaw:{dtend}",
+            f"DTSTAMP:{now_utc}",
+            f"DTSTART:{dtstart_utc}",
+            f"DTEND:{dtend_utc}",
             "RRULE:FREQ=WEEKLY;UNTIL=20270215T235959Z",
             f"SUMMARY:{summary}",
             f"LOCATION:{location}",
