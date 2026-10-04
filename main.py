@@ -4,42 +4,45 @@ import requests
 from bs4 import BeautifulSoup
 import openpyxl
 from datetime import datetime, date, time, timedelta
-from ics import Calendar, Event
 import zoneinfo
+import uuid
 
 # ==================== KONFIGURACJA ====================
 INDEX_NUMBER = "21459"
 OUTPUT_ICS = "plan_zajec_IOSI.ics"
 EXCEL_FILE = "pobrany_plan.xlsx"
 
+# Prawidłowy adres strony z planami zajęć Instytutu
+URL_STRONY_PLANU = "https://ans-elblag.pl/iis-plany-zajec.html"
+
 # Poniedziałek pierwszego tygodnia semestru zimowego 2026/2027
-SEMESTER_START_MONDAY = date(2026, 10, 5) 
+SEMESTER_START_MONDAY = date(2026, 10, 5)
 # ======================================================
 
 def download_excel_from_ans():
-    urls_to_try = [
-        "https://ans-elblag.pl/iis-plany-zajec.html"
-    ]
-    
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
-    for page_url in urls_to_try:
-        try:
-            res = requests.get(page_url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                for a in soup.find_all('a', href=True):
-                    if 'IOSI' in a['href'] or 'ios' in a['href'].lower():
-                        link = a['href']
-                        if not link.startswith('http'):
-                            base = "/".join(page_url.split('/')[:3])
-                            link = f"{base}{link}"
-                        r = requests.get(link, headers=headers)
-                        with open(EXCEL_FILE, 'wb') as f:
-                            f.write(r.content)
-                        return True
-        except Exception as e:
-            print(f"Błąd sprawdzania {page_url}: {e}")
+    try:
+        res = requests.get(URL_STRONY_PLANU, headers=headers, timeout=10)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            # Szukamy linku do pliku z planem zajęć III rok INFORMATYKA IOSI
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                # Dopasowanie po słowach kluczowych w linku lub tekście odnośnika
+                if ('IOSI' in href or 'ios' in href.lower() or 'IOSI' in a.get_text()) and (href.endswith('.xlsx') or href.endswith('.xls')):
+                    link = href
+                    if not link.startswith('http'):
+                        link = f"https://ans-elblag.pl/{link.lstrip('/')}"
+                    
+                    print(f"Pobieranie pliku z: {link}")
+                    r = requests.get(link, headers=headers)
+                    with open(EXCEL_FILE, 'wb') as f:
+                        f.write(r.content)
+                    return True
+    except Exception as e:
+        print(f"Błąd pobierania ze strony: {e}")
             
     return False
 
@@ -122,23 +125,49 @@ def parse_schedule_directly(excel_path, my_groups):
 
     return events
 
-def generate_ics_with_library(events_list, output_path):
-    cal = Calendar()
+def generate_apple_valid_ics(events_list, output_path):
+    now_str = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+    
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//ANS Elblag//Plan Zajec IOSI//PL",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "X-WR-CALNAME:Plan Zajęć ANS IOSI",
+        "X-WR-TIMEZONE:Europe/Warsaw"
+    ]
 
     for item in events_list:
-        event = Event()
-        event.name = item['summary']
-        event.location = item['location']
-        event.description = item['description']
-        event.begin = item['start']
-        event.end = item['end']
-        cal.events.add(event)
+        uid = f"{uuid.uuid4()}@ans-elblag.pl"
+        dtstart = item['start'].strftime('%Y%m%dT%H%M%S')
+        dtend = item['end'].strftime('%Y%m%dT%H%M%S')
+        
+        summary = item['summary'].replace('\n', ' ').replace(',', '\\,')
+        location = item['location'].replace('\n', ' ').replace(',', '\\,')
+        description = item['description'].replace('\n', '\\n').replace(',', '\\,')
 
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.writelines(cal.serialize_iter())
+        lines.extend([
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{now_str}",
+            f"DTSTART;TZID=Europe/Warsaw:{dtstart}",
+            f"DTEND;TZID=Europe/Warsaw:{dtend}",
+            "RRULE:FREQ=WEEKLY;UNTIL=20270215T235959Z",
+            f"SUMMARY:{summary}",
+            f"LOCATION:{location}",
+            f"DESCRIPTION:{description}",
+            "STATUS:CONFIRMED",
+            "END:VEVENT"
+        ])
+
+    lines.append("END:VCALENDAR")
+
+    with open(output_path, 'w', encoding='utf-8', newline='\r\n') as f:
+        f.write("\r\n".join(lines))
 
 def main():
-    print("Próba pobrania planu ze strony ANS...")
+    print(f"Pobieranie planu z adresu: {URL_STRONY_PLANU}")
     download_excel_from_ans()
 
     if not os.path.exists(EXCEL_FILE):
@@ -147,13 +176,13 @@ def main():
 
     wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
     my_groups = get_student_groups(wb, INDEX_NUMBER)
-    print(f"Znalezione grupy: {my_groups}")
+    print(f"Znalezione grupy dla indeksu {INDEX_NUMBER}: {my_groups}")
 
     events = parse_schedule_directly(EXCEL_FILE, my_groups)
     print(f"Przetworzono {len(events)} zajęć.")
 
-    generate_ics_with_library(events, OUTPUT_ICS)
-    print(f"Zapisano plik {OUTPUT_ICS}")
+    generate_apple_valid_ics(events, OUTPUT_ICS)
+    print(f"Pomyślnie zapisano plik {OUTPUT_ICS}")
 
 if __name__ == "__main__":
     main()
