@@ -17,44 +17,32 @@ CACHE_FILE = "last_update_IOSI.txt"                           # Zapis ostatniej 
 SEMESTER_START_MONDAY = date(2026, 10, 5) 
 # ======================================================
 
-def check_and_get_excel_url(page_url, target_name):
-    headers = {'User-Agent': 'Mozilla/5.0'}
+def get_excel_link_direct(page_url, target_name):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     response = requests.get(page_url, headers=headers)
     soup = BeautifulSoup(response.text, 'html.parser')
 
     excel_url = None
-    update_date = None
-
-    for element in soup.find_all(['p', 'li', 'div']):
+    for element in soup.find_all(['p', 'li', 'div', 'tr']):
         text = element.get_text()
         if target_name in text:
-            date_match = re.search(r'aktualizacja\s*([\d\.]+)', text, re.IGNORECASE)
-            if date_match:
-                update_date = date_match.group(1)
-
             a_tag = element.find('a', href=True)
             if a_tag:
                 excel_url = a_tag['href']
                 if not excel_url.startswith('http'):
-                    base_url = "/".join(page_url.split('/')[:3])
-                    excel_url = f"{base_url}{excel_url}"
-            break
+                    excel_url = f"https://iisi.ans-elblag.pl{excel_url}"
+                break
 
     if not excel_url:
-        raise ValueError(f"Nie znaleziono pliku dla: {target_name}")
+        # Fallback - jeśli nie znajdzie po tekście, szuka pierwszego pliku xlsx dla III roku IOSI
+        for a in soup.find_all('a', href=True):
+            if 'IOSI' in a['href'] and (a['href'].endswith('.xlsx') or a['href'].endswith('.xls')):
+                excel_url = a['href']
+                if not excel_url.startswith('http'):
+                    excel_url = f"https://iisi.ans-elblag.pl{excel_url}"
+                break
 
-    is_updated = True
-    if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            last_date = f.read().strip()
-        if last_date == update_date and update_date is not None:
-            is_updated = False
-
-    if is_updated and update_date:
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            f.write(update_date)
-
-    return is_updated, excel_url, update_date
+    return excel_url
 
 def get_student_groups(wb, student_index):
     groups = []
@@ -135,9 +123,6 @@ def parse_schedule_directly(excel_path, my_groups):
     return events
 
 def generate_ics_standard(events_list, output_path):
-    """
-    Ręczne tworzenie standardowego pliku .ics zgodnego w 100% z wymogami Apple iCalendar.
-    """
     now_str = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
     
     lines = [
@@ -165,7 +150,7 @@ def generate_ics_standard(events_list, output_path):
             f"DTSTAMP:{now_str}",
             f"DTSTART;TZID=Europe/Warsaw:{dtstart}",
             f"DTEND;TZID=Europe/Warsaw:{dtend}",
-            "RRULE:FREQ=WEEKLY;UNTIL=20270215T235959Z",  # Powtarzaj co tydzień do końca semestru zimowego
+            "RRULE:FREQ=WEEKLY;UNTIL=20270215T235959Z",
             f"SUMMARY:{summary}",
             f"LOCATION:{location}",
             f"DESCRIPTION:{description}",
@@ -179,38 +164,29 @@ def generate_ics_standard(events_list, output_path):
         f.write("\r\n".join(lines))
 
 def main():
-    print(f"Sprawdzanie aktualizacji planu na stronie uczelni dla: {TARGET_KIERUNEK}...")
-    try:
-        updated, excel_url, update_date = check_and_get_excel_url(URL_STRONY_PLANU, TARGET_KIERUNEK)
-    except Exception as e:
-        print(f"Błąd sprawdzania strony: {e}")
-        excel_url = None
-        updated = False
-
+    print(f"Pobieranie linku do planu ze strony ANS...")
+    excel_url = get_excel_link_direct(URL_STRONY_PLANU, TARGET_KIERUNEK)
+    
     excel_file = "pobrany_plan.xlsx"
-
-    if updated and excel_url:
-        print(f"Pobieranie nowego pliku Excel z dnia {update_date}...")
+    if excel_url:
+        print(f"Pobieranie pliku Excel z: {excel_url}")
         res = requests.get(excel_url)
         with open(excel_file, 'wb') as f:
             f.write(res.content)
-    elif not os.path.exists(excel_file):
-        print("Brak zaktualizowanej daty, ale plik lokalny nie istnieje. Pobieranie...")
-        if excel_url:
-            res = requests.get(excel_url)
-            with open(excel_file, 'wb') as f:
-                f.write(res.content)
+    else:
+        print("Błąd: Nie odnaleziono URL pliku Excel!")
+        return
 
     if os.path.exists(excel_file):
         wb = openpyxl.load_workbook(excel_file, data_only=True)
         my_groups = get_student_groups(wb, INDEX_NUMBER)
-        print(f"Znalezione grupy dla Twojego indeksu ({INDEX_NUMBER}): {my_groups}")
+        print(f"Znalezione grupy: {my_groups}")
 
         events = parse_schedule_directly(excel_file, my_groups)
-        print(f"Przetworzono {len(events)} zajęć.")
+        print(f"Wygenerowano {len(events)} wydarzeń.")
 
         generate_ics_standard(events, OUTPUT_ICS)
-        print(f"Pomyślnie wygenerowano plik kalendarza: {OUTPUT_ICS}")
+        print(f"Zapisano plik {OUTPUT_ICS}")
 
 if __name__ == "__main__":
     main()
