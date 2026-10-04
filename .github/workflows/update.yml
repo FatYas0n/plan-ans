@@ -3,10 +3,10 @@ name: Aktualizuj plan zajec
 on:
   workflow_dispatch:        # reczne uruchomienie przyciskiem
   schedule:
-    - cron: '0 6,15,21 * * *'  # Uruchamia się 3 razy dziennie
+    - cron: "0 5 * * *"     # codziennie ok. 6-7 rano czasu polskiego
   push:
     branches: [main]
-    paths: ["main.py", "requirements.txt"]
+    paths: ["main.py", "requirements.txt", "pobrany_plan.xlsx"]
 
 permissions:
   contents: write
