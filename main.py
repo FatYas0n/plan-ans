@@ -7,42 +7,44 @@ from datetime import datetime, date, time, timedelta
 import uuid
 
 # ==================== KONFIGURACJA ====================
-URL_STRONY_PLANU = "https://ans-elblag.pl/iis-plany-zajec.html"
-INDEX_NUMBER = "21459"                                        # Podaj swój numer indeksu
-TARGET_KIERUNEK = "III rok INFORMATYKA IOSI"                  # Dokładna nazwa ze strony
-OUTPUT_ICS = "plan_zajec_IOSI.ics"                            # Wyjściowy plik kalendarza
-CACHE_FILE = "last_update_IOSI.txt"                           # Zapis ostatniej daty modyfikacji
+INDEX_NUMBER = "21459"
+OUTPUT_ICS = "plan_zajec_IOSI.ics"
+EXCEL_FILE = "III SS IOSI.xlsx"
 
-# Data początkowa poniedziałku pierwszego tygodnia semestru
+# Poniedziałek pierwszego tygodnia semestru zimowego
 SEMESTER_START_MONDAY = date(2026, 10, 5) 
 # ======================================================
 
-def get_excel_link_direct(page_url, target_name):
+def download_excel_from_ans():
+    """
+    Pobiera najnowszy plik planu ze strony instytutu.
+    """
+    urls_to_try = [
+        "https://ans-elblag.pl/iis-plany-zajec.html"
+    ]
+    
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    response = requests.get(page_url, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    excel_url = None
-    for element in soup.find_all(['p', 'li', 'div', 'tr']):
-        text = element.get_text()
-        if target_name in text:
-            a_tag = element.find('a', href=True)
-            if a_tag:
-                excel_url = a_tag['href']
-                if not excel_url.startswith('http'):
-                    excel_url = f"https://iisi.ans-elblag.pl{excel_url}"
-                break
-
-    if not excel_url:
-        # Fallback - jeśli nie znajdzie po tekście, szuka pierwszego pliku xlsx dla III roku IOSI
-        for a in soup.find_all('a', href=True):
-            if 'IOSI' in a['href'] and (a['href'].endswith('.xlsx') or a['href'].endswith('.xls')):
-                excel_url = a['href']
-                if not excel_url.startswith('http'):
-                    excel_url = f"https://iisi.ans-elblag.pl{excel_url}"
-                break
-
-    return excel_url
+    
+    for page_url in urls_to_try:
+        try:
+            res = requests.get(page_url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                for a in soup.find_all('a', href=True):
+                    if 'IOSI' in a['href'] or 'ios' in a['href'].lower():
+                        link = a['href']
+                        if not link.startswith('http'):
+                            base = "/".join(page_url.split('/')[:3])
+                            link = f"{base}{link}"
+                        print(f"Znaleziono link do pliku: {link}")
+                        r = requests.get(link, headers=headers)
+                        with open(EXCEL_FILE, 'wb') as f:
+                            f.write(r.content)
+                        return True
+        except Exception as e:
+            print(f"Błąd sprawdzania {page_url}: {e}")
+            
+    return False
 
 def get_student_groups(wb, student_index):
     groups = []
@@ -164,29 +166,22 @@ def generate_ics_standard(events_list, output_path):
         f.write("\r\n".join(lines))
 
 def main():
-    print(f"Pobieranie linku do planu ze strony ANS...")
-    excel_url = get_excel_link_direct(URL_STRONY_PLANU, TARGET_KIERUNEK)
+    print("Próba pobrania planu ze strony ANS...")
+    success = download_excel_from_ans()
     
-    excel_file = "pobrany_plan.xlsx"
-    if excel_url:
-        print(f"Pobieranie pliku Excel z: {excel_url}")
-        res = requests.get(excel_url)
-        with open(excel_file, 'wb') as f:
-            f.write(res.content)
-    else:
-        print("Błąd: Nie odnaleziono URL pliku Excel!")
+    if not success and not os.path.exists(EXCEL_FILE):
+        print("Nie udało się pobrać pliku i brak pliku lokalnego.")
         return
 
-    if os.path.exists(excel_file):
-        wb = openpyxl.load_workbook(excel_file, data_only=True)
-        my_groups = get_student_groups(wb, INDEX_NUMBER)
-        print(f"Znalezione grupy: {my_groups}")
+    wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
+    my_groups = get_student_groups(wb, INDEX_NUMBER)
+    print(f"Znalezione grupy: {my_groups}")
 
-        events = parse_schedule_directly(excel_file, my_groups)
-        print(f"Wygenerowano {len(events)} wydarzeń.")
+    events = parse_schedule_directly(EXCEL_FILE, my_groups)
+    print(f"Przetworzono {len(events)} zajęć.")
 
-        generate_ics_standard(events, OUTPUT_ICS)
-        print(f"Zapisano plik {OUTPUT_ICS}")
+    generate_ics_standard(events, OUTPUT_ICS)
+    print(f"Zapisano plik {OUTPUT_ICS}")
 
 if __name__ == "__main__":
     main()
