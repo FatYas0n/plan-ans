@@ -9,7 +9,7 @@ import uuid
 # ==================== KONFIGURACJA ====================
 INDEX_NUMBER = "21459"
 OUTPUT_ICS = "plan_zajec_IOSI.ics"
-EXCEL_FILE = "III SS IOSI.xlsx"
+EXCEL_FILE = "pobrany_plan.xlsx"
 
 # Poniedziałek pierwszego tygodnia semestru zimowego
 SEMESTER_START_MONDAY = date(2026, 10, 5) 
