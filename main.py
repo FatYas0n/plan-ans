@@ -4,21 +4,19 @@ import requests
 from bs4 import BeautifulSoup
 import openpyxl
 from datetime import datetime, date, time, timedelta
-import uuid
+from ics import Calendar, Event
+import zoneinfo
 
 # ==================== KONFIGURACJA ====================
 INDEX_NUMBER = "21459"
 OUTPUT_ICS = "plan_zajec_IOSI.ics"
 EXCEL_FILE = "pobrany_plan.xlsx"
 
-# Poniedziałek pierwszego tygodnia semestru zimowego
+# Poniedziałek pierwszego tygodnia semestru zimowego 2026/2027
 SEMESTER_START_MONDAY = date(2026, 10, 5) 
 # ======================================================
 
 def download_excel_from_ans():
-    """
-    Pobiera najnowszy plik planu ze strony instytutu.
-    """
     urls_to_try = [
         "https://ans-elblag.pl/iis-plany-zajec.html"
     ]
@@ -36,7 +34,6 @@ def download_excel_from_ans():
                         if not link.startswith('http'):
                             base = "/".join(page_url.split('/')[:3])
                             link = f"{base}{link}"
-                        print(f"Znaleziono link do pliku: {link}")
                         r = requests.get(link, headers=headers)
                         with open(EXCEL_FILE, 'wb') as f:
                             f.write(r.content)
@@ -81,6 +78,7 @@ def parse_schedule_directly(excel_path, my_groups):
     day_columns = {col: i for i, col in enumerate([2, 17, 41, 56, 73])}
     time_pattern = re.compile(r'godz\.?\s*(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})', re.IGNORECASE)
 
+    tz = zoneinfo.ZoneInfo("Europe/Warsaw")
     events = []
 
     for rng in ws.merged_cells.ranges:
@@ -111,8 +109,8 @@ def parse_schedule_directly(excel_path, my_groups):
         room = lines[2] if len(lines) > 2 else ""
 
         event_date = SEMESTER_START_MONDAY + timedelta(days=day_idx)
-        start_dt = datetime.combine(event_date, time(hour=start_h, minute=start_m))
-        end_dt = datetime.combine(event_date, time(hour=end_h, minute=end_m))
+        start_dt = datetime.combine(event_date, time(hour=start_h, minute=start_m), tzinfo=tz)
+        end_dt = datetime.combine(event_date, time(hour=end_h, minute=end_m), tzinfo=tz)
 
         events.append({
             'summary': title,
@@ -124,53 +122,27 @@ def parse_schedule_directly(excel_path, my_groups):
 
     return events
 
-def generate_ics_standard(events_list, output_path):
-    now_str = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
-    
-    lines = [
-        "BEGIN:VCALENDAR",
-        "VERSION:2.0",
-        "PRODID:-//ANS Elblag//Plan Zajec IOSI//PL",
-        "CALSCALE:GREGORIAN",
-        "METHOD:PUBLISH",
-        "X-WR-CALNAME:Plan Zajęć ANS IOSI",
-        "X-WR-TIMEZONE:Europe/Warsaw"
-    ]
+def generate_ics_with_library(events_list, output_path):
+    cal = Calendar()
 
     for item in events_list:
-        uid = f"{uuid.uuid4()}@ans-elblag.pl"
-        dtstart = item['start'].strftime('%Y%m%dT%H%M%S')
-        dtend = item['end'].strftime('%Y%m%dT%H%M%S')
-        
-        summary = item['summary'].replace('\n', ' ').replace(',', '\\,')
-        location = item['location'].replace('\n', ' ').replace(',', '\\,')
-        description = item['description'].replace('\n', '\\n').replace(',', '\\,')
+        event = Event()
+        event.name = item['summary']
+        event.location = item['location']
+        event.description = item['description']
+        event.begin = item['start']
+        event.end = item['end']
+        cal.events.add(event)
 
-        lines.extend([
-            "BEGIN:VEVENT",
-            f"UID:{uid}",
-            f"DTSTAMP:{now_str}",
-            f"DTSTART;TZID=Europe/Warsaw:{dtstart}",
-            f"DTEND;TZID=Europe/Warsaw:{dtend}",
-            "RRULE:FREQ=WEEKLY;UNTIL=20270215T235959Z",
-            f"SUMMARY:{summary}",
-            f"LOCATION:{location}",
-            f"DESCRIPTION:{description}",
-            "STATUS:CONFIRMED",
-            "END:VEVENT"
-        ])
-
-    lines.append("END:VCALENDAR")
-
-    with open(output_path, 'w', encoding='utf-8', newline='\r\n') as f:
-        f.write("\r\n".join(lines))
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.writelines(cal.serialize_iter())
 
 def main():
     print("Próba pobrania planu ze strony ANS...")
-    success = download_excel_from_ans()
-    
-    if not success and not os.path.exists(EXCEL_FILE):
-        print("Nie udało się pobrać pliku i brak pliku lokalnego.")
+    download_excel_from_ans()
+
+    if not os.path.exists(EXCEL_FILE):
+        print("Brak pliku Excel.")
         return
 
     wb = openpyxl.load_workbook(EXCEL_FILE, data_only=True)
@@ -180,7 +152,7 @@ def main():
     events = parse_schedule_directly(EXCEL_FILE, my_groups)
     print(f"Przetworzono {len(events)} zajęć.")
 
-    generate_ics_standard(events, OUTPUT_ICS)
+    generate_ics_with_library(events, OUTPUT_ICS)
     print(f"Zapisano plik {OUTPUT_ICS}")
 
 if __name__ == "__main__":
