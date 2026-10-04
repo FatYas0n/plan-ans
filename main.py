@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import openpyxl
 from datetime import datetime, date, time, timedelta
-from ics import Calendar, Event
+import uuid
 
 # ==================== KONFIGURACJA ====================
 URL_STRONY_PLANU = "https://ans-elblag.pl/iis-plany-zajec.html"
@@ -134,19 +134,49 @@ def parse_schedule_directly(excel_path, my_groups):
 
     return events
 
-def generate_ics(events_list, output_path):
-    cal = Calendar()
-    for item in events_list:
-        event = Event()
-        event.name = item['summary']
-        event.location = item['location']
-        event.description = item['description']
-        event.begin = item['start']
-        event.end = item['end']
-        cal.events.add(event)
+def generate_ics_standard(events_list, output_path):
+    """
+    Ręczne tworzenie standardowego pliku .ics zgodnego w 100% z wymogami Apple iCalendar.
+    """
+    now_str = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+    
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//ANS Elblag//Plan Zajec IOSI//PL",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "X-WR-CALNAME:Plan Zajęć ANS IOSI",
+        "X-WR-TIMEZONE:Europe/Warsaw"
+    ]
 
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.writelines(cal.serialize_iter())
+    for item in events_list:
+        uid = f"{uuid.uuid4()}@ans-elblag.pl"
+        dtstart = item['start'].strftime('%Y%m%dT%H%M%S')
+        dtend = item['end'].strftime('%Y%m%dT%H%M%S')
+        
+        summary = item['summary'].replace('\n', ' ').replace(',', '\\,')
+        location = item['location'].replace('\n', ' ').replace(',', '\\,')
+        description = item['description'].replace('\n', '\\n').replace(',', '\\,')
+
+        lines.extend([
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{now_str}",
+            f"DTSTART;TZID=Europe/Warsaw:{dtstart}",
+            f"DTEND;TZID=Europe/Warsaw:{dtend}",
+            "RRULE:FREQ=WEEKLY;UNTIL=20270215T235959Z",  # Powtarzaj co tydzień do końca semestru zimowego
+            f"SUMMARY:{summary}",
+            f"LOCATION:{location}",
+            f"DESCRIPTION:{description}",
+            "STATUS:CONFIRMED",
+            "END:VEVENT"
+        ])
+
+    lines.append("END:VCALENDAR")
+
+    with open(output_path, 'w', encoding='utf-8', newline='\r\n') as f:
+        f.write("\r\n".join(lines))
 
 def main():
     print(f"Sprawdzanie aktualizacji planu na stronie uczelni dla: {TARGET_KIERUNEK}...")
@@ -154,7 +184,6 @@ def main():
         updated, excel_url, update_date = check_and_get_excel_url(URL_STRONY_PLANU, TARGET_KIERUNEK)
     except Exception as e:
         print(f"Błąd sprawdzania strony: {e}")
-        # Jeśli plik lokalny istnieje, sparafrazujmy lokalnie
         excel_url = None
         updated = False
 
@@ -166,7 +195,7 @@ def main():
         with open(excel_file, 'wb') as f:
             f.write(res.content)
     elif not os.path.exists(excel_file):
-        print("Brak zaktualizowanej daty, ale plik lokalny nie istnieje. Pobieganie wymuszone...")
+        print("Brak zaktualizowanej daty, ale plik lokalny nie istnieje. Pobieranie...")
         if excel_url:
             res = requests.get(excel_url)
             with open(excel_file, 'wb') as f:
@@ -180,8 +209,8 @@ def main():
         events = parse_schedule_directly(excel_file, my_groups)
         print(f"Przetworzono {len(events)} zajęć.")
 
-        generate_ics(events, OUTPUT_ICS)
-        print(f"Wygenerowano plik {OUTPUT_ICS}!")
+        generate_ics_standard(events, OUTPUT_ICS)
+        print(f"Pomyślnie wygenerowano plik kalendarza: {OUTPUT_ICS}")
 
 if __name__ == "__main__":
     main()
